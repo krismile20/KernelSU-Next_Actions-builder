@@ -1,0 +1,136 @@
+name: Build LineageOS 22.2 Joan Droidspaces KernelSU-Next
+
+on:
+  workflow_dispatch:
+
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    name: Build Joan Droidspaces kernel by ${{ github.actor }}
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out builder
+        uses: actions/checkout@v4
+
+      - name: Set swap to 10G
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 10
+
+      - name: Set up build environment
+        run: |
+          set -euo pipefail
+          echo "BUILD_TIME=$(date '+%y%m%d')" >> "$GITHUB_ENV"
+          sudo apt-get update
+          sudo apt-get install -y \
+            automake bc bison build-essential bzip2 ccache curl dpkg-dev flex \
+            g++-multilib git gperf libc6-dev-i386 libbz2-dev liblz4-tool \
+            libncurses5-dev libssl-dev lzop make patch python3 squashfs-tools \
+            zip zlib1g-dev
+          mkdir -p "$GITHUB_WORKSPACE/kernel_workspace"
+
+      - name: Download AOSP Clang
+        working-directory: kernel_workspace
+        run: |
+          git clone --depth=1 \
+            https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r487747c \
+            clang-aosp
+
+      - name: Download AOSP GCC toolchains
+        working-directory: kernel_workspace
+        run: |
+          git clone --depth=1 \
+            https://gitlab.com/crdroidandroid/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 \
+            gcc-64
+          git clone --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 \
+            gcc-32
+
+      - name: Download Joan kernel source
+        working-directory: kernel_workspace
+        run: |
+          git clone --recursive --depth=1 --branch lineage-22.2 \
+            https://github.com/JacoaFur/android_kernel_lge_msm8998.git \
+            android-kernel
+          sed -i 's/ -dirty//g' android-kernel/scripts/setlocalversion
+
+      - name: Apply Droidspaces compatibility patch
+        working-directory: kernel_workspace/android-kernel
+        run: |
+          set -euo pipefail
+          patch --dry-run -p1 < "$GITHUB_WORKSPACE/patches/droidspaces-4.4-cgroup-prefix.patch"
+          patch -p1 < "$GITHUB_WORKSPACE/patches/droidspaces-4.4-cgroup-prefix.patch"
+
+      - name: Set up KernelSU-Next
+        working-directory: kernel_workspace/android-kernel
+        run: |
+          set -euo pipefail
+          curl -LSs \
+            "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" \
+            | bash -s next
+          KSU_VERSION=$(($(git -C KernelSU-Next rev-list --count HEAD) + 10200))
+          echo "KSUVER=$KSU_VERSION" >> "$GITHUB_ENV"
+
+      - name: Configure and build Joan kernel
+        working-directory: kernel_workspace/android-kernel
+        run: |
+          set -euo pipefail
+          export ARCH=arm64
+          export SUBARCH=arm
+          export PATH="$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/bin:$GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin:$GITHUB_WORKSPACE/kernel_workspace/gcc-32/bin:$PATH"
+          export KBUILD_BUILD_HOST=GitHub-Actions
+          export KBUILD_BUILD_USER=$(echo "${{ github.actor }}" | tr '[:upper:]' '[:lower:]')
+
+          BA_CMD="CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi-"
+          EX_CMD="LD=ld.lld LLVM=1 LLVM_IAS=1"
+
+          make O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD lineageos_joan_defconfig
+          scripts/kconfig/merge_config.sh -m -O out \
+            out/.config "$GITHUB_WORKSPACE/configs/droidspaces-joan.config"
+          make O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD olddefconfig
+
+          required_configs=(
+            SYSCTL SYSVIPC POSIX_MQUEUE
+            NAMESPACES PID_NS UTS_NS IPC_NS USER_NS
+            SECCOMP SECCOMP_FILTER
+            CGROUPS CGROUP_DEVICE CGROUP_PIDS MEMCG CGROUP_FREEZER
+            DEVTMPFS OVERLAY_FS
+            NET_NS VETH BRIDGE BRIDGE_NETFILTER NF_CONNTRACK
+            IP_NF_IPTABLES IP_NF_FILTER NF_NAT IP_NF_TARGET_MASQUERADE
+          )
+          for option in "${required_configs[@]}"; do
+            if ! grep -qx "CONFIG_${option}=y" out/.config; then
+              echo "Required Droidspaces option CONFIG_${option}=y is missing"
+              exit 1
+            fi
+          done
+
+          make -j"$(nproc --all)" O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD
+          test -s out/arch/arm64/boot/Image
+
+      - name: Package AnyKernel3
+        working-directory: kernel_workspace
+        run: |
+          set -euo pipefail
+          git clone --depth=1 https://github.com/JacoaFur/AnyKernel3-Fork AnyKernel3
+          cp android-kernel/out/arch/arm64/boot/Image AnyKernel3/
+          rm -rf AnyKernel3/.git AnyKernel3/.github AnyKernel3/README.md
+
+      - name: Upload Joan kernel image and config
+        uses: actions/upload-artifact@v4
+        with:
+          name: Image-LOS22.2-Joan-Droidspaces-KernelSU-Next_${{ env.KSUVER }}
+          path: |
+            kernel_workspace/android-kernel/out/arch/arm64/boot/Image
+            kernel_workspace/android-kernel/out/.config
+          if-no-files-found: error
+
+      - name: Upload Joan AnyKernel3 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: AK3-LOS22.2-Joan-Droidspaces-KernelSU-Next_${{ env.KSUVER }}-${{ env.BUILD_TIME }}
+          path: kernel_workspace/AnyKernel3/*
+          if-no-files-found: error
