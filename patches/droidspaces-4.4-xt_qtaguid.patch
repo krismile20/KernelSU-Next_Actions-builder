@@ -28,7 +28,7 @@ diff --git a/net/netfilter/xt_qtaguid.c b/net/netfilter/xt_qtaguid.c
  
 -	if (iface_entry->active) {
 -		stats = dev_get_stats(iface_entry->net_dev,
--				     &dev_stats);
+-				      &dev_stats);
 -	} else {
 -		stats = &no_dev_stats;
 -	}
