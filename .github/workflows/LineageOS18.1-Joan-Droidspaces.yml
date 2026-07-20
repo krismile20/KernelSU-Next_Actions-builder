@@ -107,7 +107,7 @@ jobs:
             NETFILTER NF_CONNTRACK
             IP_NF_IPTABLES IP_NF_FILTER
             NF_NAT IP_NF_NAT IP_NF_TARGET_MASQUERADE
-            NETFILTER_XT_TARGET_MASQUERADE NETFILTER_XT_MATCH_ADDRTYPE
+            NETFILTER_XT_MATCH_ADDRTYPE
           )
 
           for option in "${required_y[@]}"; do
