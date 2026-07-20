@@ -1,31 +1,45 @@
-From 50cb2ccbef7d84852f2600bb4d3e69f6bd736561 Mon Sep 17 00:00:00 2001
-From: ravindu644 <droidcasts@protonmail.com>
-Date: Sun, 22 Feb 2026 22:27:15 +0530
-Subject: [PATCH] Droidspaces/LXC: restore cgroup file prefix handling
+From 0000000000000000000000000000000000000001 Mon Sep 17 00:00:00 2001
+From: adapted-for-msm8998
+Date: Mon, 20 Jul 2026 00:00:00 +0000
+Subject: [PATCH] cgroup: restore prefixed symlink under CGRP_ROOT_NOPREFIX
 
-Adapt the upstream Droidspaces non-GKI patch to the Joan 4.4 tree, where
-cgroup.c lives directly under kernel/.
+Droidspaces/LXC compatibility for non-GKI 4.4 trees (kernel/cgroup.c).
 
-Signed-off-by: ravindu644 <droidcasts@protonmail.com>
+When a hierarchy is mounted with "noprefix", create a compatibility
+symlink: <subsys>.<file> -> <file>.
+
+- use name vs legacy_name like cgroup_file_name()
+- warn on kernfs_create_link() failure
+
 ---
- kernel/cgroup.c | 5 +++++
- 1 file changed, 5 insertions(+)
+ kernel/cgroup.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
 
 diff --git a/kernel/cgroup.c b/kernel/cgroup.c
-index 694b1cc8d..d0d04bff1 100755
 --- a/kernel/cgroup.c
 +++ b/kernel/cgroup.c
-@@ -3496,6 +3496,11 @@ static int cgroup_add_file(struct cgroup_subsys_state *css, struct cgroup *cgrp,
+@@ -3490,6 +3490,21 @@ static int cgroup_add_file(struct cgroup_subsys_state *css, struct cgroup *cgrp,
+ 		spin_lock_irq(&cgroup_file_kn_lock);
+ 		cfile->kn = kn;
  		spin_unlock_irq(&cgroup_file_kn_lock);
  	}
- 
-+	if (cft->ss && (cgrp->root->flags & CGRP_ROOT_NOPREFIX) && !(cft->flags & CFTYPE_NO_PREFIX)) {
-+		snprintf(name, CGROUP_FILE_NAME_MAX, "%s.%s", cft->ss->name, cft->name);
-+		kernfs_create_link(cgrp->kn, name, kn);
-+	}
 +
++	/*
++	 * Under CGRP_ROOT_NOPREFIX the real file has no "subsys." prefix.
++	 * Create a compatibility symlink: subsys.file -> file
++	 * (mainly useful for cpuset hierarchies mounted with noprefix).
++	 */
++	if (cft->ss && (cgrp->root->flags & CGRP_ROOT_NOPREFIX) &&
++	    !(cft->flags & CFTYPE_NO_PREFIX)) {
++		const char *ssn = cgroup_on_dfl(cgrp) ? cft->ss->name
++						     : cft->ss->legacy_name;
++
++		snprintf(name, CGROUP_FILE_NAME_MAX, "%s.%s", ssn, cft->name);
++		if (kernfs_create_link(cgrp->kn, name, kn))
++			pr_warn("cgroup: failed to create prefix link %s\n", name);
++	}
+ 
  	return 0;
  }
- 
 -- 
 2.43.0
