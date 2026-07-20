@@ -1,48 +1,41 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: adapted-for-msm8998
-Date: Mon, 20 Jul 2026 00:00:00 +0000
-Subject: [PATCH] cgroup: restore prefixed symlink under CGRP_ROOT_NOPREFIX
+From 0000000000000000000000000000000000000002 Mon Sep 17 00:00:00 2001
+From: ravindu644
+Date: Sun, 22 Feb 2026 22:24:27 +0530
+Subject: [PATCH] xt_qtaguid: avoid kernel panic on inactive interfaces
 
-Droidspaces/LXC compatibility for non-GKI 4.4 trees.
+Do not call dev_get_stats() on possibly inactive/stale net_dev from
+iface_stat_fmt_proc_show(). Always use zeroed stats for this path.
 
-When a hierarchy is mounted with "noprefix", cgroup control files are
-created without the subsystem prefix. Create an additional
-"<subsys>.<file>" kernfs link so userspace that expects the prefixed
-name still works.
-
-Adapted for SGCMarkus/android_kernel_lge_msm8998 (kernel/cgroup.c):
-- use name vs legacy_name like cgroup_file_name()
-- warn on link creation failure
-
+Signed-off-by: ravindu644
 ---
- kernel/cgroup.c | 12 ++++++++++++
- 1 file changed, 12 insertions(+)
+ net/netfilter/xt_qtaguid.c | 10 +++-------
+ 1 file changed, 3 insertions(+), 7 deletions(-)
 
-diff --git a/kernel/cgroup.c b/kernel/cgroup.c
---- a/kernel/cgroup.c
-+++ b/kernel/cgroup.c
-@@ -3490,6 +3490,18 @@ static int cgroup_add_file(struct cgroup_subsys_state *css, struct cgroup *cgrp,
- 		spin_lock_irq(&cgroup_file_kn_lock);
- 		cfile->kn = kn;
- 		spin_unlock_irq(&cgroup_file_kn_lock);
- 	}
-+
-+	/*
-+	 * Under CGRP_ROOT_NOPREFIX the real file has no "subsys." prefix.
-+	 * Create a compatibility symlink: subsys.file -> file
-+	 * (mainly useful for cpuset hierarchies mounted with noprefix).
-+	 */
-+	if (cft->ss && (cgrp->root->flags & CGRP_ROOT_NOPREFIX) &&
-+	    !(cft->flags & CFTYPE_NO_PREFIX)) {
-+		const char *ssn = cgroup_on_dfl(cgrp) ? cft->ss->name
-+						     : cft->ss->legacy_name;
-+
-+		snprintf(name, CGROUP_FILE_NAME_MAX, "%s.%s", ssn, cft->name);
-+		if (kernfs_create_link(cgrp->kn, name, kn))
-+			pr_warn("cgroup: failed to create prefix link %s\n", name);
-+	}
+diff --git a/net/netfilter/xt_qtaguid.c b/net/netfilter/xt_qtaguid.c
+--- a/net/netfilter/xt_qtaguid.c
++++ b/net/netfilter/xt_qtaguid.c
+@@ -739,7 +739,7 @@ static int iface_stat_fmt_proc_show(struct seq_file *m, void *v)
+ {
+ 	struct proc_iface_stat_fmt_info *p = m->private;
+ 	struct iface_stat *iface_entry;
+-	struct rtnl_link_stats64 dev_stats, *stats;
++	struct rtnl_link_stats64 *stats;
+ 	struct rtnl_link_stats64 no_dev_stats = {0};
  
- 	return 0;
- }
+ 	CT_DEBUG("qtaguid:proc iface_stat_fmt pid=%u tgid=%u uid=%u\n",
+@@ -748,12 +748,8 @@ static int iface_stat_fmt_proc_show(struct seq_file *m, void *v)
+ 	iface_entry = list_entry(v, struct iface_stat, list);
+ 
+-	if (iface_entry->active) {
+-		stats = dev_get_stats(iface_entry->net_dev,
+-				     &dev_stats);
+-	} else {
+-		stats = &no_dev_stats;
+-	}
++	stats = &no_dev_stats;
++
+ 	/*
+ 	 * If the meaning of the data changes, then update the fmtX
+ 	 * string.
 -- 
 2.43.0
