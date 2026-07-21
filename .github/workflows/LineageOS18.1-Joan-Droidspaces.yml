@@ -85,15 +85,15 @@ jobs:
           export KBUILD_BUILD_HOST=GitHub-Actions
           export KBUILD_BUILD_USER=$(echo "${{ github.actor }}" | tr '[:upper:]' '[:lower:]')
 
-          BA_CMD="CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi-"
+          BA_CMD="CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi-"
           EX_CMD=""
 
-          make O=out ARCH=arm64 CC=clang HOSTCFLAGS="-fcommon" $BA_CMD $EX_CMD lineageos_h930_defconfig
+          make O=out ARCH=arm64 HOSTCFLAGS="-fcommon" $BA_CMD $EX_CMD lineageos_h930_defconfig
 
           scripts/kconfig/merge_config.sh -m -O out \
             out/.config "$GITHUB_WORKSPACE/configs/droidspaces-joan.config"
 
-          make O=out ARCH=arm64 CC=clang HOSTCFLAGS="-fcommon" $BA_CMD $EX_CMD olddefconfig
+          make O=out ARCH=arm64 HOSTCFLAGS="-fcommon" $BA_CMD $EX_CMD olddefconfig
 
           # 强制确认 Droidspaces 关键配置
           required_y=(
@@ -124,7 +124,7 @@ jobs:
             exit 1
           fi
 
-          make -j"$(nproc --all)" O=out ARCH=arm64 CC=clang HOSTCFLAGS="-fcommon" $BA_CMD $EX_CMD
+          make -j"$(nproc --all)" O=out ARCH=arm64 HOSTCFLAGS="-fcommon" $BA_CMD $EX_CMD
 
           # 这个树默认 BUILD_ARM64_APPENDED_DTB_IMAGE=y
           if [ -s out/arch/arm64/boot/Image.gz-dtb ]; then
