@@ -1,0 +1,118 @@
+From 0000000000000000000000000000000000000003 Mon Sep 17 00:00:00 2001
+From: krismile20 <krismile20@users.noreply.github.com>
+Date: Wed, 22 Jul 2026 00:00:00 +0000
+Subject: [PATCH] qcacld-3.0: restore boot_wlan sysfs loader for static builds
+
+Joan userspace controls the built-in WLAN driver through
+/sys/kernel/boot_wlan/boot_wlan. Keep the existing /dev/wlan interface and
+add the expected sysfs trigger, loading the driver on the first write.
+
+Repeated writes are successful after the driver has loaded so Android's Wi-Fi
+state machine does not fail when it retries the enable operation.
+
+---
+ .../qcacld-3.0/core/hdd/src/wlan_hdd_main.c   | 68 +++++++++++++++++++
+ 1 file changed, 68 insertions(+)
+
+diff --git a/drivers/staging/qcacld-3.0/core/hdd/src/wlan_hdd_main.c b/drivers/staging/qcacld-3.0/core/hdd/src/wlan_hdd_main.c
+index 2504e458..35983c03 100644
+--- a/drivers/staging/qcacld-3.0/core/hdd/src/wlan_hdd_main.c
++++ b/drivers/staging/qcacld-3.0/core/hdd/src/wlan_hdd_main.c
+@@ -176,6 +176,9 @@ static struct cdev wlan_hdd_state_cdev;
+ static struct class *class;
+ static dev_t device;
+ static bool hdd_loaded = false;
++#ifndef MODULE
++static struct kobject *boot_wlan_kobj;
++#endif
+ 
+ #define HDD_OPS_INACTIVITY_TIMEOUT (120000)
+ #define MAX_OPS_NAME_STRING_SIZE 20
+@@ -13226,6 +13229,58 @@ static int wlan_hdd_state_ctrl_param_open(struct inode *inode,
+ }
+ 
+ static int hdd_driver_load(void);
++#ifndef MODULE
++static ssize_t wlan_boot_cb(struct kobject *kobj,
++			    struct kobj_attribute *attr,
++			    const char *buf, size_t count)
++{
++	int ret;
++
++	if (hdd_loaded)
++		return count;
++
++	ret = hdd_driver_load();
++	if (ret) {
++		pr_err("%s: wlan driver initialization failed: %d\n",
++		       __func__, ret);
++		return ret;
++	}
++
++	return count;
++}
++
++static struct kobj_attribute wlan_boot_attribute =
++	__ATTR(boot_wlan, 0220, NULL, wlan_boot_cb);
++
++static int wlan_boot_sysfs_create(void)
++{
++	int ret;
++
++	boot_wlan_kobj = kobject_create_and_add("boot_wlan", kernel_kobj);
++	if (!boot_wlan_kobj)
++		return -ENOMEM;
++
++	ret = sysfs_create_file(boot_wlan_kobj,
++				&wlan_boot_attribute.attr);
++	if (ret) {
++		kobject_put(boot_wlan_kobj);
++		boot_wlan_kobj = NULL;
++	}
++
++	return ret;
++}
++
++static void wlan_boot_sysfs_destroy(void)
++{
++	if (!boot_wlan_kobj)
++		return;
++
++	sysfs_remove_file(boot_wlan_kobj, &wlan_boot_attribute.attr);
++	kobject_put(boot_wlan_kobj);
++	boot_wlan_kobj = NULL;
++}
++#endif
++
+ static ssize_t wlan_hdd_state_ctrl_param_write(struct file *filp,
+ 						const char __user *user_buf,
+ 						size_t count,
+@@ -13567,6 +13622,16 @@ static int hdd_module_init(void)
+ 	ret = wlan_hdd_state_ctrl_param_create();
+ 	if (ret)
+ 		pr_err("wlan_hdd_state_create:%x\n", ret);
++	if (ret)
++		return ret;
++
++#ifndef MODULE
++	ret = wlan_boot_sysfs_create();
++	if (ret) {
++		pr_err("Failed to create boot_wlan sysfs entry: %d\n", ret);
++		wlan_hdd_state_ctrl_param_destroy();
++	}
++#endif
+ 
+ 	return ret;
+ }
+@@ -13580,6 +13645,9 @@ static int hdd_module_init(void)
+  */
+ static void __exit hdd_module_exit(void)
+ {
++#ifndef MODULE
++	wlan_boot_sysfs_destroy();
++#endif
+ 	hdd_driver_unload();
+ }
+ 
+-- 
+2.43.0

@@ -78,6 +78,11 @@ jobs:
             echo "xt_qtaguid.c not found, skip qtaguid patch"
           fi
 
+          # 3) Restore the sysfs trigger expected by Joan userspace when
+          # qcacld is built into the kernel instead of shipped as wlan.ko.
+          patch --dry-run -p1 < "$GITHUB_WORKSPACE/patches/joan-4.4-boot-wlan-sysfs.patch"
+          patch -p1 < "$GITHUB_WORKSPACE/patches/joan-4.4-boot-wlan-sysfs.patch"
+
       - name: Configure and build Joan kernel
         working-directory: kernel_workspace/android-kernel
         run: |
@@ -128,7 +133,21 @@ jobs:
             exit 1
           fi
 
+          if ! grep -qx "CONFIG_QCA_CLD_WLAN=y" out/.config; then
+            echo "CONFIG_QCA_CLD_WLAN must be built in for the boot_wlan loader"
+            exit 1
+          fi
+
           make -j"$(nproc --all)" O=out ARCH=arm64 CC=aarch64-linux-android-gcc HOSTCFLAGS="-fcommon" $BA_CMD $EX_CMD
+
+          if ! nm out/vmlinux | grep -E " [tT] wlan_boot_cb$"; then
+            echo "boot_wlan callback is missing from vmlinux"
+            exit 1
+          fi
+          if ! strings out/vmlinux | grep -x "boot_wlan"; then
+            echo "boot_wlan sysfs name is missing from vmlinux"
+            exit 1
+          fi
 
           # 这个树默认 BUILD_ARM64_APPENDED_DTB_IMAGE=y
           if [ -s out/arch/arm64/boot/Image.gz-dtb ]; then
